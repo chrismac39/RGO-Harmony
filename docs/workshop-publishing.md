@@ -21,6 +21,8 @@ New-Item -ItemType Directory -Force .local | Out-Null
 git clone --branch toolkit-release --single-branch `
   https://github.com/Europa-Universalis-5-Modding-Co-op/community-mod-toolkit.git `
   .local\community-mod-toolkit
+git -C .local\community-mod-toolkit checkout --detach `
+  73080c47f6d7667bf899af276ffd0e3674f53a64
 python -m venv .local\cmt-venv
 .local\cmt-venv\Scripts\python.exe -m pip install `
   -r .local\community-mod-toolkit\tools\dependencies\requirements.txt
@@ -29,6 +31,12 @@ python -m venv .local\cmt-venv
 Keep Steam authentication in Steam itself. Never place passwords, tokens,
 Steam Guard codes, or SteamCMD session files in this repository or generated
 artifacts.
+
+When `--sync-gallery` is requested, the adapter applies the maintained
+[CMT gallery patch](../integration/patches/cmt-gallery-sync.patch) to a
+temporary copy of the pinned toolkit files. It does not change the local
+toolkit checkout, and the patched CMT workspace is not part of the game mod.
+See the [gallery-sync decision](../integration/decisions/CMT-Gallery-Sync.md).
 
 ## Prepare and inspect
 
@@ -40,7 +48,7 @@ npm run validate -- --profile rgo-harmony
 npm test
 npm run build -- --profile rgo-harmony
 npm run workshop:cmt -- prepare --profile rgo-harmony `
-  --toolkit-dir .local\community-mod-toolkit
+  --toolkit-dir .local\community-mod-toolkit --sync-gallery
 ```
 
 Preparation produces an isolated CMT project under
@@ -60,6 +68,7 @@ starts. The command uploads to the configured existing item:
 npm run workshop:cmt -- publish --profile rgo-harmony `
   --toolkit-dir .local\community-mod-toolkit `
   --python .local\cmt-venv\Scripts\python.exe `
+  --sync-gallery `
   --confirm-publish "PUBLISH rgo-harmony UPDATE"
 ```
 

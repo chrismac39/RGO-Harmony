@@ -21,4 +21,9 @@ upstream source files without the respective authors' permission.
 
 The Community Mod Toolkit is maintained separately at
 [Europa-Universalis-5-Modding-Co-op/community-mod-toolkit](https://github.com/Europa-Universalis-5-Modding-Co-op/community-mod-toolkit);
-it is installed locally for CMT operations and is not bundled here.
+it is installed locally for CMT operations and is not bundled here. The
+maintained [gallery-sync patch](./integration/patches/cmt-gallery-sync.patch)
+is a GPL-3.0-only modification of the toolkit, applied only to generated local
+CMT workspaces. Its license is included at
+[`integration/patches/GPL-3.0.txt`](./integration/patches/GPL-3.0.txt); neither
+the toolkit nor the patch is included in the generated EU5 mod.

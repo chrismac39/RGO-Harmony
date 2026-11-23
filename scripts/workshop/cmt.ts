@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
   access,
   cp,
@@ -9,7 +10,12 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+
+const execFileAsync = promisify(execFile);
 
 export interface CmtWorkspaceOptions {
   rootDirectory: string;
@@ -131,6 +137,100 @@ async function optionalFileContents(filePath: string): Promise<string | null> {
       return null;
     }
     throw error;
+  }
+}
+
+async function hasGallerySupport(
+  uploadScript: string,
+  steamworksDirectory: string,
+): Promise<boolean> {
+  const [galleryModule, enums] = await Promise.all([
+    optionalFileContents(path.join(steamworksDirectory, "gallery.py")),
+    optionalFileContents(path.join(steamworksDirectory, "enums.py")),
+  ]);
+  return (
+    uploadScript.includes('"--sync-gallery"') &&
+    galleryModule?.includes("class SteamWorkshopGallery") === true &&
+    enums?.includes("class EItemPreviewType") === true
+  );
+}
+
+async function applyGallerySupport(
+  uploadScript: string,
+  steamworksDirectory: string,
+): Promise<{
+  uploadScript: string;
+  steamworksDirectory: string;
+  patchDirectory: string;
+}> {
+  const patchDirectory = await mkdtemp(
+    path.join(tmpdir(), "rgo-cmt-gallery-patch-"),
+  );
+  const patchToolsDirectory = path.join(patchDirectory, "tools");
+  const patchSteamworksDirectory = path.join(
+    patchToolsDirectory,
+    "steamworks",
+  );
+  try {
+    await mkdir(patchSteamworksDirectory, { recursive: true });
+    await writeFile(
+      path.join(patchToolsDirectory, "upload.py"),
+      uploadScript,
+      "utf8",
+    );
+    await cp(steamworksDirectory, patchSteamworksDirectory, {
+      recursive: true,
+    });
+
+    const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const patchPath = path.resolve(
+      sourceDirectory,
+      "../../integration/patches/cmt-gallery-sync.patch",
+    );
+    await execFileAsync(
+      "git",
+      ["apply", "--whitespace=nowarn", patchPath],
+      { cwd: patchDirectory },
+    );
+
+    const patchedUploadScript = await readFile(
+      path.join(patchToolsDirectory, "upload.py"),
+      "utf8",
+    );
+    const [patchedGalleryModule, patchedEnums] = await Promise.all([
+      optionalFileContents(path.join(patchSteamworksDirectory, "gallery.py")),
+      optionalFileContents(path.join(patchSteamworksDirectory, "enums.py")),
+    ]);
+    const missingSupport = [
+      !patchedUploadScript.includes('"--sync-gallery"') && "uploader flag",
+      !patchedGalleryModule?.includes("class SteamWorkshopGallery") &&
+        "gallery module",
+      !patchedEnums?.includes("class EItemPreviewType") && "preview enum",
+    ].filter((support): support is string => Boolean(support));
+    if (missingSupport.length > 0) {
+      throw new Error(
+        "The maintained CMT gallery patch did not produce gallery-capable " +
+          `tools (missing ${missingSupport.join(", ")})`,
+      );
+    }
+    return {
+      uploadScript: patchedUploadScript,
+      steamworksDirectory: patchSteamworksDirectory,
+      patchDirectory,
+    };
+  } catch (error) {
+    await rm(patchDirectory, { recursive: true, force: true });
+    if (
+      error instanceof Error &&
+      error.message.startsWith("The maintained CMT gallery patch")
+    ) {
+      throw error;
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not apply the maintained CMT gallery patch. It targets ` +
+        `toolkit-release commit 73080c47f6d7667bf899af276ffd0e3674f53a64. ${detail}`,
+    );
   }
 }
 
@@ -298,14 +398,30 @@ export async function prepareCmtWorkspace(
     generatedConfig = replaceTomlValue(generatedConfig, key, value);
   }
 
-  const compatibleUploadScript = sanitizeCmtReleaseFolderName(
-    addDlcSource(uploadScript),
-  );
   await mkdir(workspaceParent, { recursive: true });
   const stagingDirectory = await mkdtemp(
     path.join(workspaceParent, ".cmt-staging-"),
   );
+  let galleryPatchDirectory: string | null = null;
   try {
+    let preparedUploadScript = uploadScript;
+    let preparedSteamworksDirectory = toolkitSteamworksPath;
+    if (
+      options.syncGallery &&
+      !(await hasGallerySupport(uploadScript, toolkitSteamworksPath))
+    ) {
+      const patched = await applyGallerySupport(
+        uploadScript,
+        toolkitSteamworksPath,
+      );
+      preparedUploadScript = patched.uploadScript;
+      preparedSteamworksDirectory = patched.steamworksDirectory;
+      galleryPatchDirectory = patched.patchDirectory;
+    }
+    const compatibleUploadScript = sanitizeCmtReleaseFolderName(
+      addDlcSource(preparedUploadScript),
+    );
+
     for (const entry of await readdir(artifactDirectory, {
       withFileTypes: true,
     })) {
@@ -328,7 +444,7 @@ export async function prepareCmtWorkspace(
       recursive: true,
     });
     await cp(
-      toolkitSteamworksPath,
+      preparedSteamworksDirectory,
       path.join(dependenciesDirectory, "steamworks"),
       { recursive: true },
     );
@@ -387,6 +503,9 @@ export async function prepareCmtWorkspace(
     await rm(workspaceDirectory, { recursive: true, force: true });
     await rename(stagingDirectory, workspaceDirectory);
   } finally {
+    if (galleryPatchDirectory !== null) {
+      await rm(galleryPatchDirectory, { recursive: true, force: true });
+    }
     await rm(stagingDirectory, { recursive: true, force: true });
   }
 

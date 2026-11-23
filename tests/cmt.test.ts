@@ -163,6 +163,26 @@ test("prepares an isolated CMT project with profile content and release assets",
       path.join(sourceGalleryDirectory, "01-overview.PNG"),
       "one",
     );
+    await assert.rejects(
+      prepareCmtWorkspace({ ...options, syncGallery: true }),
+      /Could not apply the maintained CMT gallery patch/,
+    );
+    await writeFile(
+      path.join(toolkitDirectory, "tools", "upload.py"),
+      [
+        'SOURCES = [\n    "in_game",\n    "main_menu",\n]\n',
+        'clean_name = clean_name.lower().replace(" ", "-")\n',
+        'parser.add_argument("--sync-gallery")\n',
+      ].join(""),
+    );
+    await writeFile(
+      path.join(toolkitDirectory, "tools", "steamworks", "enums.py"),
+      "class EItemPreviewType:\n    IMAGE = 0\n",
+    );
+    await writeFile(
+      path.join(toolkitDirectory, "tools", "steamworks", "gallery.py"),
+      "class SteamWorkshopGallery:\n    pass\n",
+    );
 
     await writeFile(
       path.join(result.workspaceDirectory, "tools", "config.toml"),
@@ -196,6 +216,26 @@ test("prepares an isolated CMT project with profile content and release assets",
       "01-overview.PNG",
       "02-economy.jpg",
     ]);
+    assert.match(
+      await readFile(
+        path.join(refreshed.workspaceDirectory, "tools", "upload.py"),
+        "utf8",
+      ),
+      /--sync-gallery/,
+    );
+    assert.equal(
+      await readFile(
+        path.join(
+          refreshed.workspaceDirectory,
+          "tools",
+          "dependencies",
+          "steamworks",
+          "gallery.py",
+        ),
+        "utf8",
+      ),
+      "class SteamWorkshopGallery:\n    pass\n",
+    );
     assert.equal(
       await readFile(
         path.join(stagedGalleryDirectory, "01-overview.PNG"),

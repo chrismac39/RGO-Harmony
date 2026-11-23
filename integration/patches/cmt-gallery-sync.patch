@@ -1,0 +1,775 @@
+diff --git a/tools/steamworks/enums.py b/tools/steamworks/enums.py
+index f9491f3..404c702 100644
+--- a/tools/steamworks/enums.py
++++ b/tools/steamworks/enums.py
+@@ -43,6 +43,10 @@ class EWorkshopFileType(Enum):
+     MAX                     = 16
+ 
+ 
++class EItemPreviewType(Enum):
++    IMAGE                   = 0
++
++
+ class EResult(Enum):
+     OK                      = 1
+     FAIL                    = 2     # Unknown error
+diff --git a/tools/upload.py b/tools/upload.py
+index 317c4c8..0ac6e82 100644
+--- a/tools/upload.py
++++ b/tools/upload.py
+@@ -16,7 +16,8 @@ DEPENDENCIES_DIR = os.path.join(SCRIPT_DIR, "dependencies")
+ sys.path.insert(0, DEPENDENCIES_DIR)
+ 
+ from steamworks import STEAMWORKS
+-from steamworks.enums import EItemUpdateStatus, EResult, EWorkshopFileType
++from steamworks.enums import EItemPreviewType, EItemUpdateStatus, EResult, EWorkshopFileType
++from steamworks.gallery import SteamWorkshopGallery, SteamWorkshopGalleryError
+ 
+ # --- User Configuration ---
+ SOURCES = [
+@@ -54,6 +55,11 @@ UPLOAD_WORKSHOP_PAGES_DEFAULT_KEY = "upload_workshop_pages_by_default"
+ UPLOAD_SUBMODS_DEFAULT_KEY = "upload_submods_by_default"
+ UPLOAD_ON_VERSION_CHANGE_KEY = "upload_only_on_version_change"
+ UPLOAD_CHANGE_NOTES_DEFAULT_KEY = "upload_change_notes_by_default"
++WORKSHOP_GALLERY_DIR_KEY = "workshop_gallery_dir"
++DEFAULT_WORKSHOP_GALLERY_DIR = os.path.join("assets", "workshop", "gallery")
++MAX_GALLERY_IMAGE_BYTES = 1_000_000
++GALLERY_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
++PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+ UPLOAD_VERSIONS_PATH = os.path.join(DEPENDENCIES_DIR, ".upload_versions.json")
+ UPLOAD_VERSIONS_FILE_VERSION = 1
+ CHANGE_NOTES_VERSION_RE = re.compile(
+@@ -111,6 +117,95 @@ def load_config(config_path):
+ 
+     return data
+ 
++def load_gallery_images(config):
++    """Return validated gallery files in deterministic filename order."""
++    directory = config.get(WORKSHOP_GALLERY_DIR_KEY, DEFAULT_WORKSHOP_GALLERY_DIR)
++    if not isinstance(directory, str) or not directory.strip():
++        print(f"Error: {WORKSHOP_GALLERY_DIR_KEY} must be a non-empty path in config.toml.")
++        return None
++
++    if not os.path.isabs(directory):
++        directory = os.path.join(ROOT_DIR, directory)
++    directory = os.path.abspath(directory)
++    if not os.path.isdir(directory):
++        print(f"Error: Workshop gallery directory not found: {directory}")
++        return None
++
++    try:
++        with os.scandir(directory) as scan:
++            entries = sorted(
++                scan,
++                key=lambda entry: (entry.name.casefold(), entry.name),
++            )
++    except OSError as exc:
++        print(f"Error: Could not read Workshop gallery directory '{directory}': {exc}")
++        return None
++
++    image_paths = []
++    for entry in entries:
++        try:
++            is_directory = entry.is_dir(follow_symlinks=False)
++        except OSError as exc:
++            print(f"Error: Could not inspect Workshop gallery entry '{entry.path}': {exc}")
++            return None
++        if is_directory:
++            continue
++
++        extension = os.path.splitext(entry.name)[1].lower()
++        if extension not in GALLERY_IMAGE_EXTENSIONS:
++            print(
++                f"Error: Unsupported file in Workshop gallery directory: "
++                f"{entry.path}. Use JPG, JPEG, or PNG files only."
++            )
++            return None
++        if not entry.is_file(follow_symlinks=True):
++            print(f"Error: Workshop gallery image is not a regular file: {entry.path}")
++            return None
++
++        try:
++            file_size = entry.stat(follow_symlinks=True).st_size
++            with open(entry.path, "rb") as image_file:
++                header = image_file.read(24)
++        except OSError as exc:
++            print(f"Error: Could not read Workshop gallery image '{entry.path}': {exc}")
++            return None
++
++        if file_size >= MAX_GALLERY_IMAGE_BYTES:
++            print(
++                f"Error: Workshop gallery image must be smaller than 1 MB: "
++                f"{entry.path}"
++            )
++            return None
++
++        if extension == ".png":
++            valid_format = (
++                len(header) >= 24
++                and header.startswith(PNG_SIGNATURE)
++                and header[12:16] == b"IHDR"
++                and int.from_bytes(header[16:20], "big") > 0
++                and int.from_bytes(header[20:24], "big") > 0
++            )
++        else:
++            valid_format = header.startswith(b"\xff\xd8\xff")
++
++        if not valid_format:
++            print(
++                f"Error: Workshop gallery image content does not match its "
++                f"'{extension}' extension: {entry.path}"
++            )
++            return None
++
++        image_paths.append(os.path.abspath(entry.path))
++
++    if not image_paths:
++        print(
++            f"Error: Workshop gallery directory contains no images: {directory}. "
++            "An empty gallery is not synchronized to avoid deleting remote images."
++        )
++        return None
++
++    return image_paths
++
+ def load_workshop_item_id(config, key, label):
+     """Load the workshop item ID from config data."""
+     upload_item_id = config.get(key)
+@@ -820,11 +915,74 @@ def _submit_and_wait(steam, handle, change_note="", show_progress=False):
+ 
+     return True
+ 
+-def upload_release(steam, content_dir, preview_path, item_id, workshop_title=None, change_note=""):
++def prepare_gallery_sync(steam, item_id, remote_previews=None):
++    """Query the current gallery before creating an item update handle."""
++    try:
++        gallery = SteamWorkshopGallery()
++        if remote_previews is None:
++            remote_previews = gallery.get_additional_previews(item_id, steam)
++    except SteamWorkshopGalleryError as exc:
++        print(f"Error: Could not inspect the Workshop gallery: {exc}")
++        return None, None
++    return gallery, remote_previews
++
++def apply_gallery_sync(gallery, update_handle, remote_previews, gallery_files):
++    """Replace remote image previews while preserving other preview types."""
++    image_indexes = [
++        index
++        for index, preview in enumerate(remote_previews)
++        if preview.preview_type == EItemPreviewType.IMAGE.value
++    ]
++    non_image_count = len(remote_previews) - len(image_indexes)
++
++    if image_indexes:
++        print("Existing remote gallery images to be replaced:")
++        for index in image_indexes:
++            filename = remote_previews[index].filename or f"preview {index + 1}"
++            print(f"  - {filename}")
++    else:
++        print("No existing remote gallery images.")
++    if non_image_count:
++        print(f"Preserving {non_image_count} existing non-image preview(s).")
++
++    for index in reversed(image_indexes):
++        if not gallery.remove_item_preview(update_handle, index):
++            print(f"Error: RemoveItemPreview failed for gallery preview {index}.")
++            return False
++
++    for image_path in gallery_files:
++        if not gallery.add_item_preview_file(update_handle, image_path):
++            print(f"Error: AddItemPreviewFile failed for '{image_path}'.")
++            return False
++
++    print(f"Queued {len(gallery_files)} gallery image(s) in filename order.")
++    return True
++
++def upload_release(
++    steam,
++    content_dir,
++    preview_path,
++    item_id,
++    workshop_title=None,
++    change_note="",
++    gallery_files=None,
++    gallery_remote_previews=None,
++):
+     if not os.path.isdir(content_dir):
+         print(f"Error: Release directory not found: {content_dir}")
+         return False
+ 
++    gallery = None
++    remote_previews = None
++    if gallery_files is not None:
++        gallery, remote_previews = prepare_gallery_sync(
++            steam,
++            item_id,
++            remote_previews=gallery_remote_previews,
++        )
++        if gallery is None:
++            return False
++
+     workshop = steam.Workshop
+     handle = workshop.StartItemUpdate(APP_ID, item_id)
+     if not handle:
+@@ -848,6 +1006,10 @@ def upload_release(steam, content_dir, preview_path, item_id, workshop_title=Non
+             print("Error: SetItemPreview failed.")
+             return False
+ 
++    if gallery_files is not None:
++        if not apply_gallery_sync(gallery, handle, remote_previews, gallery_files):
++            return False
++
+     print("Workshop update submitted. Waiting for upload to complete...")
+     if not _submit_and_wait(steam, handle, change_note, show_progress=True):
+         return False
+@@ -855,6 +1017,32 @@ def upload_release(steam, content_dir, preview_path, item_id, workshop_title=Non
+     print("Workshop update completed successfully.")
+     return True
+ 
++def upload_gallery_only(steam, item_id, gallery_files, remote_previews=None):
++    """Publish a gallery synchronization without changing mod content or thumbnail."""
++    gallery, remote_previews = prepare_gallery_sync(
++        steam,
++        item_id,
++        remote_previews=remote_previews,
++    )
++    if gallery is None:
++        return False
++
++    workshop = steam.Workshop
++    handle = workshop.StartItemUpdate(APP_ID, item_id)
++    if not handle:
++        print("Error: StartItemUpdate failed. Check app ID and item ID.")
++        return False
++
++    if not apply_gallery_sync(gallery, handle, remote_previews, gallery_files):
++        return False
++
++    print("Workshop gallery update submitted. Waiting for upload to complete...")
++    if not _submit_and_wait(steam, handle, show_progress=True):
++        return False
++
++    print("Workshop gallery update completed successfully.")
++    return True
++
+ def read_text(path):
+     """Read a UTF-8 text file, returning None on missing/failed reads."""
+     try:
+@@ -1211,7 +1399,29 @@ def parse_args():
+         action="store_true",
+         help="Upload change notes. When set, config default target settings are ignored."
+     )
+-    return parser.parse_args()
++    parser.add_argument(
++        "--sync-gallery",
++        action="store_true",
++        help="Replace remote gallery images with the configured local image set."
++    )
++    parser.add_argument(
++        "--gallery-only",
++        action="store_true",
++        help="Synchronize gallery images without uploading mod content or Workshop pages."
++    )
++    parser.add_argument(
++        "--dry-run",
++        action="store_true",
++        help="Validate a --gallery-only sync without connecting to Steam."
++    )
++    args = parser.parse_args()
++    if args.gallery_only and (
++        args.mod or args.workshop_pages or args.submods or args.change_notes
++    ):
++        parser.error("--gallery-only cannot be combined with other upload targets.")
++    if args.dry_run and not args.gallery_only:
++        parser.error("--dry-run requires --gallery-only.")
++    return args
+ 
+ def main():
+     args = parse_args()
+@@ -1219,23 +1429,61 @@ def main():
+     if config is None:
+         return 1
+ 
+-    upload_mod, upload_workshop_pages, upload_submods_selected, upload_change_notes = resolve_upload_targets(args, config)
++    gallery_sync_requested = args.sync_gallery or args.gallery_only
++    if args.gallery_only:
++        upload_mod = False
++        upload_workshop_pages = False
++        upload_submods_selected = False
++        upload_change_notes = False
++    else:
++        upload_mod, upload_workshop_pages, upload_submods_selected, upload_change_notes = resolve_upload_targets(args, config)
+     if upload_mod is None:
+         return 1
+ 
+-    upload_only_on_version_change = load_optional_bool(config, UPLOAD_ON_VERSION_CHANGE_KEY, False)
+-    if upload_only_on_version_change is None:
+-        return 1
+-
+-    version_cache = load_upload_versions(UPLOAD_VERSIONS_PATH) if upload_only_on_version_change else None
+-
+-    if not upload_mod and not upload_workshop_pages and not upload_submods_selected and not upload_change_notes:
++    if (
++        not upload_mod
++        and not upload_workshop_pages
++        and not upload_submods_selected
++        and not upload_change_notes
++        and not gallery_sync_requested
++    ):
+         print(
+             "No upload actions selected. "
+             "Enable defaults in config.toml or pass -m/-wp/-s/-cn."
+         )
+         return 0
+ 
++    gallery_files = None
++    if gallery_sync_requested:
++        gallery_files = load_gallery_images(config)
++        if gallery_files is None:
++            return 1
++
++    item_id_key = "workshop_upload_item_id_dev" if args.dev else "workshop_upload_item_id"
++    item_label = "dev item id" if args.dev else "item id"
++    if args.dry_run:
++        item_id = load_workshop_item_id(config, item_id_key, item_label)
++        if item_id is None:
++            return 1
++        if item_id == 0:
++            print("Error: --gallery-only requires an existing Workshop item ID.")
++            return 1
++        print(f"Dry run: validated {len(gallery_files)} gallery image(s):")
++        for image_path in gallery_files:
++            print(f"  - {os.path.basename(image_path)}")
++        print(
++            "No Steam connection or upload was attempted. A real sync will replace "
++            "existing remote image previews and preserve the primary thumbnail and "
++            "non-image previews."
++        )
++        return 0
++
++    upload_only_on_version_change = load_optional_bool(config, UPLOAD_ON_VERSION_CHANGE_KEY, False)
++    if upload_only_on_version_change is None:
++        return 1
++
++    version_cache = load_upload_versions(UPLOAD_VERSIONS_PATH) if upload_only_on_version_change else None
++
+     upload_mod_effective = upload_mod
+     main_version = None
+     main_cache_key = "main:dev" if args.dev else "main:release"
+@@ -1249,19 +1497,37 @@ def main():
+     if upload_change_notes and main_version is None:
+         main_version = load_metadata_version(METADATA_PATH, "main mod")
+ 
+-    if not upload_mod_effective and not upload_workshop_pages and not upload_submods_selected and not upload_change_notes:
++    if (
++        not upload_mod_effective
++        and not upload_workshop_pages
++        and not upload_submods_selected
++        and not upload_change_notes
++        and not gallery_sync_requested
++    ):
+         print("No uploads required after version check.")
+         return 0
+ 
+-    item_id_key = "workshop_upload_item_id_dev" if args.dev else "workshop_upload_item_id"
+-    item_label = "dev item id" if args.dev else "item id"
+     item_id = None
+     dev_name = load_dev_name(config) if args.dev else None
+ 
+-    if upload_mod_effective or upload_workshop_pages or upload_change_notes:
++    created_new_item = False
++    if upload_mod_effective or upload_workshop_pages or upload_change_notes or gallery_sync_requested:
+         item_id = load_workshop_item_id(config, item_id_key, item_label)
+         if item_id is None:
+             return 1
++        created_new_item = (
++            item_id == 0
++            and (upload_mod_effective or upload_workshop_pages or upload_change_notes)
++        )
++        if (
++            gallery_sync_requested
++            and not upload_mod_effective
++            and not upload_workshop_pages
++            and not upload_change_notes
++            and item_id == 0
++        ):
++            print("Error: Gallery-only updates require an existing Workshop item ID.")
++            return 1
+ 
+     release_dir = None
+     preview_path = None
+@@ -1284,10 +1550,24 @@ def main():
+ 
+         if upload_mod_effective:
+             if not upload_release(steam, release_dir, preview_path, item_id,
+-                                  workshop_title, change_note=change_note):
++                                  workshop_title,
++                                  change_note=change_note,
++                                  gallery_files=gallery_files if gallery_sync_requested else None,
++                                  gallery_remote_previews=(
++                                      [] if created_new_item and gallery_sync_requested else None
++                                  )):
+                 return 1
+             uploaded_main = True
+ 
++        if gallery_sync_requested and not upload_mod_effective:
++            if not upload_gallery_only(
++                steam,
++                item_id,
++                gallery_files,
++                remote_previews=[] if created_new_item else None,
++            ):
++                return 1
++
+         if upload_workshop_pages:
+             page_updates = build_workshop_page_updates(
+                 config,
+diff --git a/tools/steamworks/gallery.py b/tools/steamworks/gallery.py
+new file mode 100644
+index 0000000..3bf2890
+--- /dev/null
++++ b/tools/steamworks/gallery.py
+@@ -0,0 +1,343 @@
++import ctypes
++import os
++import sys
++import time
++from ctypes import (
++    CFUNCTYPE,
++    POINTER,
++    Structure,
++    c_bool,
++    c_char,
++    c_char_p,
++    c_int,
++    c_uint8,
++    c_uint32,
++    c_uint64,
++    c_void_p,
++    byref,
++    cast,
++    create_string_buffer,
++    pointer,
++    sizeof,
++    string_at,
++)
++from typing import NamedTuple
++
++from steamworks.enums import EItemPreviewType
++
++
++STEAMWORKS_UGC_INTERFACE = "SteamAPI_SteamUGC_v016"
++STEAM_UGC_QUERY_COMPLETED_CALLBACK_ID = 3401
++QUERY_TIMEOUT_SECONDS = 30
++QUERY_POLL_INTERVAL_SECONDS = 0.1
++PREVIEW_URL_BUFFER_SIZE = 4096
++PREVIEW_FILENAME_BUFFER_SIZE = 1024
++
++
++class SteamWorkshopGalleryError(Exception):
++    pass
++
++
++class WorkshopPreview(NamedTuple):
++    filename: str
++    preview_type: int
++    url: str
++
++
++class _SteamUGCQueryCompleted(Structure):
++    _fields_ = [
++        ("handle", c_uint64),
++        ("result", c_int),
++        ("num_results_returned", c_uint32),
++        ("total_matching_results", c_uint32),
++        ("cached_data", c_bool),
++        ("next_cursor", c_char * 256),
++    ]
++
++
++_CALLBACK_RUN = CFUNCTYPE(None, c_void_p, c_void_p)
++_CALLBACK_RUN_WITH_RESULT = CFUNCTYPE(None, c_void_p, c_void_p, c_bool, c_uint64)
++_CALLBACK_SIZE = CFUNCTYPE(c_int, c_void_p)
++
++
++def _steamworks_library_path(module_file, library_name):
++    module_directory = os.path.dirname(os.path.abspath(module_file))
++    tools_directory = os.path.dirname(module_directory)
++    if os.path.basename(tools_directory) == "dependencies":
++        tools_directory = os.path.dirname(tools_directory)
++    return os.path.join(tools_directory, "dependencies", library_name)
++
++
++class _CallbackVTable(Structure):
++    _fields_ = [
++        ("run", _CALLBACK_RUN),
++        ("run_with_result", _CALLBACK_RUN_WITH_RESULT),
++        ("get_callback_size", _CALLBACK_SIZE),
++    ]
++
++
++class _CallbackBase(Structure):
++    _fields_ = [
++        ("vtable", POINTER(_CallbackVTable)),
++        ("flags", c_uint8),
++        ("callback_id", c_int),
++    ]
++
++
++class SteamWorkshopGallery:
++    def __init__(self):
++        if sys.platform == "win32":
++            library_name = "steam_api64.dll" if sizeof(c_void_p) == 8 else "steam_api.dll"
++        elif sys.platform.startswith("linux"):
++            library_name = "libsteam_api.so"
++        elif sys.platform == "darwin":
++            library_name = "libsteam_api.dylib"
++        else:
++            raise SteamWorkshopGalleryError(
++                f"Gallery synchronization is not supported on platform '{sys.platform}'."
++            )
++
++        library_path = _steamworks_library_path(__file__, library_name)
++        if not os.path.isfile(library_path):
++            raise SteamWorkshopGalleryError(
++                f"Steamworks API library not found: {library_path}"
++            )
++
++        try:
++            self._api = ctypes.CDLL(library_path)
++            get_ugc_interface = getattr(self._api, STEAMWORKS_UGC_INTERFACE)
++        except (OSError, AttributeError) as exc:
++            raise SteamWorkshopGalleryError(
++                f"Could not load the Steamworks UGC API from '{library_path}': {exc}"
++            ) from exc
++
++        get_ugc_interface.restype = c_void_p
++        get_ugc_interface.argtypes = []
++        self._ugc = get_ugc_interface()
++        if not self._ugc:
++            raise SteamWorkshopGalleryError(
++                "Steamworks did not provide the ISteamUGC v016 interface."
++            )
++
++        self._add_preview = self._bind(
++            "SteamAPI_ISteamUGC_AddItemPreviewFile",
++            c_bool,
++            [c_void_p, c_uint64, c_char_p, c_int],
++        )
++        self._remove_preview = self._bind(
++            "SteamAPI_ISteamUGC_RemoveItemPreview",
++            c_bool,
++            [c_void_p, c_uint64, c_uint32],
++        )
++        self._create_details_request = self._bind(
++            "SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest",
++            c_uint64,
++            [c_void_p, POINTER(c_uint64), c_uint32],
++        )
++        self._set_return_additional_previews = self._bind(
++            "SteamAPI_ISteamUGC_SetReturnAdditionalPreviews",
++            c_bool,
++            [c_void_p, c_uint64, c_bool],
++        )
++        self._send_query = self._bind(
++            "SteamAPI_ISteamUGC_SendQueryUGCRequest",
++            c_uint64,
++            [c_void_p, c_uint64],
++        )
++        self._get_num_previews = self._bind(
++            "SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews",
++            c_uint32,
++            [c_void_p, c_uint64, c_uint32],
++        )
++        self._get_preview = self._bind(
++            "SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview",
++            c_bool,
++            [
++                c_void_p,
++                c_uint64,
++                c_uint32,
++                c_uint32,
++                POINTER(c_char),
++                c_uint32,
++                POINTER(c_char),
++                c_uint32,
++                POINTER(c_int),
++            ],
++        )
++        self._release_query = self._bind(
++            "SteamAPI_ISteamUGC_ReleaseQueryUGCRequest",
++            c_bool,
++            [c_void_p, c_uint64],
++        )
++        self._register_call_result = self._bind(
++            "SteamAPI_RegisterCallResult",
++            None,
++            [POINTER(_CallbackBase), c_uint64],
++        )
++        self._unregister_call_result = self._bind(
++            "SteamAPI_UnregisterCallResult",
++            None,
++            [POINTER(_CallbackBase), c_uint64],
++        )
++
++    def _bind(self, name, return_type, argument_types):
++        try:
++            function = getattr(self._api, name)
++        except AttributeError as exc:
++            raise SteamWorkshopGalleryError(
++                f"The installed Steamworks API does not export {name}."
++            ) from exc
++        function.restype = return_type
++        function.argtypes = argument_types
++        return function
++
++    def add_item_preview_file(self, update_handle, path):
++        return bool(
++            self._add_preview(
++                self._ugc,
++                update_handle,
++                os.fsencode(os.path.abspath(path)),
++                EItemPreviewType.IMAGE.value,
++            )
++        )
++
++    def remove_item_preview(self, update_handle, preview_index):
++        return bool(self._remove_preview(self._ugc, update_handle, preview_index))
++
++    def get_additional_previews(self, published_file_id, steam):
++        if published_file_id <= 0:
++            raise SteamWorkshopGalleryError("A valid Workshop item ID is required.")
++
++        item_ids = (c_uint64 * 1)(published_file_id)
++        query_handle = self._create_details_request(self._ugc, item_ids, 1)
++        if not query_handle:
++            raise SteamWorkshopGalleryError(
++                "Steamworks could not create a Workshop details query."
++            )
++
++        callback = None
++        callback_pointer = None
++        call_handle = 0
++        callback_registered = False
++        try:
++            if not self._set_return_additional_previews(self._ugc, query_handle, True):
++                raise SteamWorkshopGalleryError(
++                    "Steamworks could not enable additional-preview query results."
++                )
++
++            callback, callback_state = self._make_query_callback()
++            callback_pointer = pointer(callback)
++            call_handle = self._send_query(self._ugc, query_handle)
++            if not call_handle:
++                raise SteamWorkshopGalleryError(
++                    "Steamworks could not submit the Workshop details query."
++                )
++            self._register_call_result(callback_pointer, call_handle)
++            callback_registered = True
++
++            deadline = time.monotonic() + QUERY_TIMEOUT_SECONDS
++            while not callback_state["done"]:
++                steam.run_callbacks()
++                if time.monotonic() >= deadline:
++                    raise SteamWorkshopGalleryError(
++                        f"Timed out after {QUERY_TIMEOUT_SECONDS} seconds while querying "
++                        "Workshop gallery previews."
++                    )
++                time.sleep(QUERY_POLL_INTERVAL_SECONDS)
++
++            if callback_state["io_failure"]:
++                raise SteamWorkshopGalleryError(
++                    "Steamworks reported an I/O failure while querying gallery previews."
++                )
++
++            result = callback_state["result"]
++            if result is None:
++                raise SteamWorkshopGalleryError(
++                    "Steamworks returned no result for the Workshop details query."
++                )
++            if result.handle != query_handle:
++                raise SteamWorkshopGalleryError(
++                    "Steamworks returned a different Workshop query handle."
++                )
++            if result.result != 1:
++                raise SteamWorkshopGalleryError(
++                    f"Workshop gallery query failed with EResult {result.result}."
++                )
++            if result.num_results_returned != 1:
++                raise SteamWorkshopGalleryError(
++                    "Steamworks did not return details for the requested Workshop item."
++                )
++
++            preview_count = self._get_num_previews(self._ugc, query_handle, 0)
++            previews = []
++            for preview_index in range(preview_count):
++                url_buffer = create_string_buffer(PREVIEW_URL_BUFFER_SIZE)
++                filename_buffer = create_string_buffer(PREVIEW_FILENAME_BUFFER_SIZE)
++                preview_type = c_int()
++                if not self._get_preview(
++                    self._ugc,
++                    query_handle,
++                    0,
++                    preview_index,
++                    url_buffer,
++                    len(url_buffer),
++                    filename_buffer,
++                    len(filename_buffer),
++                    byref(preview_type),
++                ):
++                    raise SteamWorkshopGalleryError(
++                        f"Steamworks could not read remote gallery preview "
++                        f"{preview_index}."
++                    )
++                previews.append(
++                    WorkshopPreview(
++                        filename_buffer.value.decode("utf-8", "replace"),
++                        preview_type.value,
++                        url_buffer.value.decode("utf-8", "replace"),
++                    )
++                )
++            return previews
++        finally:
++            if callback_registered:
++                self._unregister_call_result(callback_pointer, call_handle)
++            if not self._release_query(self._ugc, query_handle):
++                raise SteamWorkshopGalleryError(
++                    "Steamworks could not release the Workshop details query."
++                )
++
++    @staticmethod
++    def _make_query_callback():
++        state = {"done": False, "io_failure": False, "result": None}
++
++        def finish(parameter, io_failure=False):
++            if state["done"]:
++                return
++            if io_failure or not parameter:
++                state["io_failure"] = True
++            else:
++                data = string_at(parameter, sizeof(_SteamUGCQueryCompleted))
++                state["result"] = _SteamUGCQueryCompleted.from_buffer_copy(data)
++            state["done"] = True
++
++        run_callback = _CALLBACK_RUN(lambda _this, parameter: finish(parameter))
++        run_with_result = _CALLBACK_RUN_WITH_RESULT(
++            lambda _this, parameter, io_failure, _call_handle: finish(
++                parameter, io_failure
++            )
++        )
++        get_callback_size = _CALLBACK_SIZE(
++            lambda _this: sizeof(_SteamUGCQueryCompleted)
++        )
++        vtable = _CallbackVTable(
++            run_callback,
++            run_with_result,
++            get_callback_size,
++        )
++        callback = _CallbackBase(
++            pointer(vtable),
++            0,
++            STEAM_UGC_QUERY_COMPLETED_CALLBACK_ID,
++        )
++        callback._vtable = vtable
++        callback._callbacks = (run_callback, run_with_result, get_callback_size)
++        return callback, state
