@@ -142,17 +142,23 @@ async function optionalFileContents(filePath: string): Promise<string | null> {
 
 async function hasGallerySupport(
   uploadScript: string,
+  toolsDirectory: string,
   steamworksDirectory: string,
 ): Promise<boolean> {
-  const [galleryModule, enums] = await Promise.all([
+  const [galleryScript, galleryModule, enums] = await Promise.all([
+    optionalFileContents(path.join(toolsDirectory, "workshop_gallery.py")),
     optionalFileContents(path.join(steamworksDirectory, "gallery.py")),
     optionalFileContents(path.join(steamworksDirectory, "enums.py")),
   ]);
-  return (
+  const nativeGallerySupport =
+    uploadScript.includes('"--sync-gallery"') &&
+    uploadScript.includes("from workshop_gallery import") &&
+    galleryScript?.includes("class SteamUGCGalleryApi") === true;
+  const steamworksGallerySupport =
     uploadScript.includes('"--sync-gallery"') &&
     galleryModule?.includes("class SteamWorkshopGallery") === true &&
-    enums?.includes("class EItemPreviewType") === true
-  );
+    enums?.includes("class EItemPreviewType") === true;
+  return nativeGallerySupport || steamworksGallerySupport;
 }
 
 async function applyGallerySupport(
@@ -292,6 +298,10 @@ export async function prepareCmtWorkspace(
 
   const toolkitToolsDirectory = path.join(toolkitDirectory, "tools");
   const uploadScriptPath = path.join(toolkitToolsDirectory, "upload.py");
+  const galleryScriptPath = path.join(
+    toolkitToolsDirectory,
+    "workshop_gallery.py",
+  );
   const toolkitConfigPath = path.join(toolkitToolsDirectory, "config.toml");
   const toolkitDependenciesPath = path.join(
     toolkitToolsDirectory,
@@ -344,6 +354,7 @@ export async function prepareCmtWorkspace(
 
   const [
     uploadScript,
+    galleryScript,
     toolkitConfig,
     description,
     changeNotes,
@@ -351,6 +362,7 @@ export async function prepareCmtWorkspace(
     toolkitSteamworksStat,
   ] = await Promise.all([
     readFile(uploadScriptPath, "utf8"),
+    optionalFileContents(galleryScriptPath),
     readFile(toolkitConfigPath, "utf8"),
     readFile(descriptionPath, "utf8"),
     readFile(changeNotesPath, "utf8"),
@@ -405,16 +417,22 @@ export async function prepareCmtWorkspace(
   let galleryPatchDirectory: string | null = null;
   try {
     let preparedUploadScript = uploadScript;
+    let preparedGalleryScript = galleryScript;
     let preparedSteamworksDirectory = toolkitSteamworksPath;
     if (
       options.syncGallery &&
-      !(await hasGallerySupport(uploadScript, toolkitSteamworksPath))
+      !(await hasGallerySupport(
+        uploadScript,
+        toolkitToolsDirectory,
+        toolkitSteamworksPath,
+      ))
     ) {
       const patched = await applyGallerySupport(
         uploadScript,
         toolkitSteamworksPath,
       );
       preparedUploadScript = patched.uploadScript;
+      preparedGalleryScript = null;
       preparedSteamworksDirectory = patched.steamworksDirectory;
       galleryPatchDirectory = patched.patchDirectory;
     }
@@ -454,6 +472,13 @@ export async function prepareCmtWorkspace(
       compatibleUploadScript,
       "utf8",
     );
+    if (preparedGalleryScript !== null) {
+      await writeFile(
+        path.join(toolsDirectory, "workshop_gallery.py"),
+        preparedGalleryScript,
+        "utf8",
+      );
+    }
     await writeFile(
       path.join(toolsDirectory, "config.toml"),
       generatedConfig,

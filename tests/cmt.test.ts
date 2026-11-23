@@ -262,6 +262,38 @@ test("prepares an isolated CMT project with profile content and release assets",
       ),
       '{"versions":{}}',
     );
+
+    await rm(path.join(toolkitDirectory, "tools", "steamworks", "enums.py"));
+    await rm(path.join(toolkitDirectory, "tools", "steamworks", "gallery.py"));
+    await writeFile(
+      path.join(toolkitDirectory, "tools", "upload.py"),
+      [
+        'SOURCES = [\n    "dlc",\n    "in_game",\n]\n',
+        String.raw`clean_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", clean_name.lower().replace(" ", "-")).strip(" .")` +
+          "\n",
+        "from workshop_gallery import SteamUGCGalleryApi\n",
+        'parser.add_argument("--sync-gallery")\n',
+      ].join(""),
+    );
+    await writeFile(
+      path.join(toolkitDirectory, "tools", "workshop_gallery.py"),
+      "class SteamUGCGalleryApi:\n    pass\n",
+    );
+    const nativePrepared = await prepareCmtWorkspace({
+      ...options,
+      syncGallery: true,
+    });
+    assert.equal(
+      await readFile(
+        path.join(
+          nativePrepared.workspaceDirectory,
+          "tools",
+          "workshop_gallery.py",
+        ),
+        "utf8",
+      ),
+      "class SteamUGCGalleryApi:\n    pass\n",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
