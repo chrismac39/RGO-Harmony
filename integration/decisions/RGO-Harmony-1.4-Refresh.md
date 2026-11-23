@@ -192,3 +192,8 @@ The test release uses version 0.1.11 and updates the existing Workshop item
 gameplay. Distribution of the compatibility patch, including the merged More
 Locations map data, remains covered by the repository owner's recorded
 explicit permission; upstream source snapshots are not included.
+
+The next release increments to 0.1.12 to verify publishing from the standalone
+repository. Its change note identifies the release-pipeline check; the
+compatibility payload is unchanged. Confirm the new version and note on item
+3833870015 after publishing before treating the upload as successful.
