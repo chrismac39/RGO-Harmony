@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "profiles": {
+    "rgo-harmony": {
+      "workshopDirectory": "integration/workshop/rgo-harmony",
+      "workshopItemId": 3833870015
+    }
+  }
+}

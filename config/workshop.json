@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "RGO Harmony: Just Goods + More Locations + Historical RGOs - Global",
+    "id": "jg_ml_gh_rgos_compat_standalone",
+    "version": "0.1.11",
+    "supportedGameVersion": "1.4.9",
+    "shortDescription": "RGO compatibility for Just Goods, More Locations, and Historical RGOs - Global. Requires all three and Community Mod Framework separately.",
+    "tags": ["Gameplay", "Map"],
+    "relationships": []
+  },
+  "requiredWorkshopItems": [
+    "3692202776",
+    "3809335454",
+    "3602513956",
+    "3785316314"
+  ],
+  "channels": {
+    "stable": {
+      "artifactDirectory": "dist/workshop/stable"
+    }
+  }
+}

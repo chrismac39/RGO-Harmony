@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "id": "community-mod-framework-eu5-1-4-9-review",
+      "name": "Community Mod Framework",
+      "type": "upstream",
+      "source": {
+        "type": "steam-workshop",
+        "workshopId": "3692202776",
+        "snapshotChecksum": "sha256:40ae855de27078a09ce30031c8fc8798060cb260e06e50a671b8a85a26973d5a",
+        "path": "sources/steam-workshop/3692202776"
+      },
+      "author": "Community Mod Framework",
+      "targetGameVersion": "1.4.9",
+      "version": "2.5.0",
+      "dependencies": [],
+      "attribution": {
+        "license": "No license provided",
+        "notice": "EU5 1.4.9 static review alias for the pinned Community Mod Framework 2.5.0 source. Upstream declares EU5 1.4.* support. Redistribution permission was confirmed by the repository owner on 2026-10-29. Runtime verification remains pending."
+      }
+    },
+    {
+      "id": "more-locations-eu5-1-4-9-review",
+      "name": "More locations Mod",
+      "type": "upstream",
+      "source": {
+        "type": "steam-workshop",
+        "workshopId": "3809335454",
+        "snapshotChecksum": "sha256:3070e5026d223a21c5cfe41c79db46947893396e5d65a436e98144b87f472d4e",
+        "path": "sources/steam-workshop/3809335454"
+      },
+      "author": "Naaku",
+      "targetGameVersion": "1.4.9",
+      "version": "2.10.2026",
+      "dependencies": [],
+      "attribution": {
+        "license": "No license provided",
+        "notice": "EU5 1.4.9 static review alias for the pinned More Locations source. Upstream declares EU5 1.4.* support. Explicit author permission for distributing the compatibility patch, including merged location-template data, is recorded. Runtime verification remains pending."
+      }
+    },
+    {
+      "id": "global-historical-rgos-eu5-1-4-9-review",
+      "name": "Global Historical RGOs",
+      "type": "upstream",
+      "source": {
+        "type": "steam-workshop",
+        "workshopId": "3602513956",
+        "snapshotChecksum": "sha256:9673d7507b72199a548214de04b798d27b0754006bc5732f07ac50dfe48d503d",
+        "path": "sources/steam-workshop/3602513956-2026-11-23"
+      },
+      "author": "Enrar",
+      "targetGameVersion": "1.4.9",
+      "version": "1.4.0",
+      "dependencies": [],
+      "attribution": {
+        "license": "No license provided",
+        "notice": "EU5 1.4.9 static review alias for the pinned Global Historical RGOs source. Its upstream metadata declares EU5 1.4.0, not 1.4.9. The selected Harmony payload was reviewed against the installed 1.4.9 vanilla files; runtime verification remains pending. Explicit author permission for distributing the compatibility patch is recorded."
+      }
+    },
+    {
+      "id": "just-goods-1-1-eu5-1-4-9-review",
+      "name": "Just Goods",
+      "type": "maintained",
+      "source": {
+        "type": "steam-workshop",
+        "workshopId": "3785316314",
+        "snapshotChecksum": "sha256:617a20cd613ec44d94ee25e8be85d2b96b1ad5686461ffcafd535f9b0ded7726",
+        "path": "sources/steam-workshop/3785316314-1.1-2026-11-23"
+      },
+      "author": "moveably",
+      "targetGameVersion": "1.4.9",
+      "version": "1.1.0",
+      "dependencies": ["community-mod-framework-eu5-1-4-9-review"],
+      "attribution": {
+        "license": "No license provided",
+        "notice": "EU5 1.4.9 static review alias for Just Goods 1.1.0. Upstream metadata declares EU5 1.4 support and a Community Mod Framework 2.* dependency. The repository owner confirms explicit author permission for distributing the compatibility patch; retain the written permission with release records. Runtime verification remains pending."
+      }
+    }
+  ]
+}

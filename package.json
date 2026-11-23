@@ -1,0 +1,29 @@
+{
+  "name": "rgo-harmony",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone RGO Harmony compatibility mod and Workshop release tooling for Europa Universalis V",
+  "scripts": {
+    "analyze": "tsx scripts/analysis/cli.ts",
+    "build": "tsx scripts/build/cli.ts build",
+    "diff": "tsx scripts/diff/cli.ts",
+    "validate": "tsx scripts/build/cli.ts validate",
+    "workshop:install": "tsx scripts/workshop/cli.ts install",
+    "workshop:cmt": "tsx scripts/workshop/cmt-cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "test": "tsx --test tests/build.test.ts tests/cmt.test.ts tests/workshop.test.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@types/node": "^22.15.30",
+    "eslint": "^9.28.0",
+    "globals": "^16.2.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.34.1"
+  }
+}

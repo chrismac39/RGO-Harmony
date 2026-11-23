@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "filePathCollisions": "error",
+  "filePathResolutions": [
+    {
+      "path": "in_game/map_data/location_templates.txt",
+      "packages": [
+        "global-historical-rgos-eu5-1-4-9-review",
+        "more-locations-eu5-1-4-9-review"
+      ],
+      "resolutionType": "merged-patch",
+      "sourceFingerprints": {
+        "global-historical-rgos-eu5-1-4-9-review": "f5d3dd52d51c47933755378baf2a15b8c2c4d2de55c2199f61032c911cc502d1",
+        "more-locations-eu5-1-4-9-review": "7062be86b7c7b76fb74da9f641f8fa74fd6d84ab2a4149b81d05bb93724281f7"
+      },
+      "patchId": "just-goods-more-locations-global-historical-rgos",
+      "reason": "Use the same content-pinned merged template patch for the 1.4.9 review aliases: Global Historical RGOs wins the 1,269 approved direct disagreements and 48 qualifying descendants, while Just Goods' fixed-location effects remain authoritative."
+    }
+  ],
+  "semanticResolutions": [
+    {
+      "fingerprint": "609d382f987bd347",
+      "resolutionType": "native-merge",
+      "decision": "Keep the separate CMF, Just Brass, and Just Clocks registration callbacks.",
+      "reason": "CMF provides the registration extension point; Just Goods registers its Brass and Clocks settings in separate files. EU5 natively merges these distinct callbacks."
+    },
+    {
+      "fingerprint": "5352b419aee72ed7",
+      "resolutionType": "native-merge",
+      "decision": "Keep CMF's and Just Goods Academies' monthly callbacks.",
+      "reason": "CMF's monthly handler and the Academies tradition and influence pulses are distinct callbacks in separate files. Preserve both on the natively merged pulse."
+    },
+    {
+      "fingerprint": "6c07e8f60bf27845",
+      "resolutionType": "load-order",
+      "winner": "just-goods-1-1-eu5-1-4-9-review",
+      "decision": "Use Just Goods 1.1's English `hammam` localization.",
+      "reason": "The selected RGO Harmony profile keeps Just Goods after More Locations in load order, so its `Hammam` value takes precedence over More Locations' `Hammām`."
+    },
+    {
+      "fingerprint": "c470e52ef57445a1",
+      "resolutionType": "native-merge",
+      "decision": "Keep all distinct Community Mod Framework and Just Goods game-start callbacks.",
+      "reason": "The current Harmony source refresh retains the separate CMF initialization and Just Goods subsystem registrations. They are distinct EU5 on-action contributions; keep them through native merging without a whole-file replacement."
+    },
+    {
+      "fingerprint": "01ada3f16be68f29",
+      "resolutionType": "native-merge",
+      "decision": "Keep all distinct Community Mod Framework and Just Goods yearly-pulse callbacks.",
+      "reason": "The current Harmony source refresh retains separate CMF and Just Goods yearly handlers and event pools. They are distinct EU5 on-action contributions; keep them through native merging without a whole-file replacement."
+    }
+  ],
+  "definitionConflicts": "deferred"
+}
